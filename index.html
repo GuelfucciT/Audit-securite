@@ -77,6 +77,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .conf-actions .btn{flex:1;}
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:400;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;}
 .toast.show{opacity:1;}
+@media print{
+  .header,.bottom-nav,.no-print{display:none!important;}
+  body{padding:0;background:#fff;}
+  .screen{display:none!important;}
+  #printArea{display:block!important;}
+}
+#printArea{display:none;}
 </style>
 </head>
 <body>
@@ -86,13 +93,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <h1 id="hTitle">Audit Sécurité</h1>
 </div>
 
+<!-- ACCUEIL -->
 <div class="screen active" id="sHome">
   <div class="divider">Rapports</div>
   <div id="rList"></div>
   <button class="btn btn-primary" id="bNew" style="margin-top:8px">+ Nouveau rapport d'audit</button>
-  <div style="text-align:center;margin-top:20px;font-size:11px;color:var(--muted);">v1.0.1</div>
+  <div style="text-align:center;margin-top:20px;font-size:11px;color:var(--muted);">v1.0.2</div>
 </div>
 
+<!-- ÉDITION RAPPORT -->
 <div class="screen" id="sReport">
   <div class="card">
     <div class="field"><label>Secteur / Site</label><input id="fSecteur" type="text" placeholder="Ex : Secteur Sud-Est"></div>
@@ -105,13 +114,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <button class="btn btn-primary" id="bSave">Enregistrer le rapport</button>
 </div>
 
-<div class="screen" id="sPreview">
-  <div style="display:flex;gap:10px;margin-bottom:12px">
-    <button class="btn btn-outline" id="bBackPreview" style="flex:1">← Retour</button>
-    <button class="btn btn-primary" id="bPrintPreview" style="flex:1">🖨 Imprimer / PDF</button>
-  </div>
-  <div id="previewContent"></div>
-</div>
+<!-- VUE RAPPORT -->
+<div class="screen" id="sView">
   <div id="vContent"></div>
   <div style="display:flex;gap:10px;margin-top:8px">
     <button class="btn btn-outline" id="bEdit" style="flex:1">Modifier</button>
@@ -120,6 +124,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <button class="btn btn-danger" id="bDelCur" style="margin-top:10px">Supprimer ce rapport</button>
 </div>
 
+<!-- APERÇU PDF -->
+<div class="screen" id="sPreview">
+  <div style="display:flex;gap:10px;margin-bottom:12px" class="no-print">
+    <button class="btn btn-outline" id="bBackPreview" style="flex:1">← Retour</button>
+    <button class="btn btn-primary" id="bPrintPreview" style="flex:1">🖨 Imprimer / PDF</button>
+  </div>
+  <div id="previewContent"></div>
+</div>
+
+<!-- ZONE D'IMPRESSION -->
+<div id="printArea"></div>
+
+<!-- MODAL SITUATION -->
 <div class="modal-overlay" id="sitModal">
   <div class="modal">
     <div class="mhandle"></div>
@@ -170,6 +187,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 
+<!-- CONFIRMATION SUPPRESSION -->
 <div class="conf-ov" id="confOv">
   <div class="conf-box">
     <h3>Supprimer ce rapport ?</h3>
@@ -196,14 +214,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 
 <script>
-var _d=document;
+var D=document;
 var KEY='auditV4';
 
 function persist(){
   try{localStorage.setItem(KEY,JSON.stringify(reports));}
   catch(e){
     try{
-      var lite=reports.map(function(r){return Object.assign({},r,{situations:(r.situations||[]).map(function(s){return Object.assign({},s,{photo:null});})});});
+      var lite=reports.map(function(r){
+        return {secteur:r.secteur,date:r.date,participants:r.participants,savedAt:r.savedAt,
+          situations:(r.situations||[]).map(function(s){
+            return {type:s.type,titre:s.titre,photo:null,preconisations:s.preconisations,risk:s.risk,
+              tache:s.tache,description:s.description,risques:s.risques,frequence:s.frequence,consequences:s.consequences};
+          })};
+      });
       localStorage.setItem(KEY,JSON.stringify(lite));
       showToast('Photos retirées (mémoire pleine)');
     }catch(e2){showToast('Sauvegarde impossible');}
@@ -223,39 +247,47 @@ var curPhoto=null;
 var curRisk=null;
 var delIdx=null;
 var swipeOpen={};
-
 var RL={faible:'Faible',moyen:'Moyen',eleve:'Élevé'};
 var RC={faible:'#1a7a3a',moyen:'#d46b00',eleve:'#c0392b'};
 var RB={faible:'#d4edda',moyen:'#fde9cc',eleve:'#fcd9d7'};
 
+// ── NAVIGATION ──────────────────────────────────────────────
 function show(n){
-  ['Home','Report','View','Preview'].forEach(function(x){_d.getElementById('s'+x).classList.remove('active');});
-  ['nHome','nNew','nExport'].forEach(function(x){_d.getElementById(x).classList.remove('active');});
-  _d.getElementById('s'+n).classList.add('active');
-  var titles={Home:'Audit Sécurité',Report:editIdx!==null?'Modifier':'Nouveau rapport',View:(reports[viewIdx]&&reports[viewIdx].secteur)||'Rapport',Preview:'Aperçu PDF'};
-  _d.getElementById('hTitle').textContent=titles[n]||'Audit Sécurité';
-  if(n==='Home'){_d.getElementById('nHome').classList.add('active');renderList();}
-  if(n==='Report')_d.getElementById('nNew').classList.add('active');
-  if(n==='View')_d.getElementById('nHome').classList.add('active');
+  ['Home','Report','View','Preview'].forEach(function(x){D.getElementById('s'+x).classList.remove('active');});
+  ['nHome','nNew','nExport'].forEach(function(x){D.getElementById(x).classList.remove('active');});
+  D.getElementById('s'+n).classList.add('active');
+  var t={Home:'Audit Sécurité',Report:editIdx!==null?'Modifier':'Nouveau rapport',View:(reports[viewIdx]&&reports[viewIdx].secteur)||'Rapport',Preview:'Aperçu PDF'};
+  D.getElementById('hTitle').textContent=t[n]||'Audit Sécurité';
+  if(n==='Home'){D.getElementById('nHome').classList.add('active');renderList();}
+  if(n==='Report')D.getElementById('nNew').classList.add('active');
+  if(n==='View'||n==='Preview')D.getElementById('nHome').classList.add('active');
 }
 
+// ── LISTE RAPPORTS + SWIPE ───────────────────────────────────
 function renderList(){
-  var el=_d.getElementById('rList');
+  var el=D.getElementById('rList');
   if(!reports.length){
     el.innerHTML='<div class="empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><p>Aucun rapport.<br>Créez votre premier audit.</p></div>';
     return;
   }
-  var html='';
+  var h='';
   for(var i=0;i<reports.length;i++){
     var r=reports[i];
-    html+='<div class="rw" id="rw'+i+'"><div class="del-bg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>Supprimer</div><div class="ri" id="ri'+i+'"><div class="ri-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="ri-info"><div class="ri-name">'+(r.secteur||'Sans titre')+'</div><div class="ri-meta">'+(r.date||'—')+' · '+((r.situations&&r.situations.length)||0)+' situation(s)</div></div><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>';
+    h+='<div class="rw" id="rw'+i+'">'
+      +'<div class="del-bg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>Supprimer</div>'
+      +'<div class="ri" id="ri'+i+'">'
+      +'<div class="ri-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>'
+      +'<div class="ri-info"><div class="ri-name">'+(r.secteur||'Sans titre')+'</div>'
+      +'<div class="ri-meta">'+(r.date||'—')+' · '+((r.situations&&r.situations.length)||0)+' situation(s)</div></div>'
+      +'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>'
+      +'</div></div>';
   }
-  el.innerHTML=html;
+  el.innerHTML=h;
   for(var j=0;j<reports.length;j++){attachSwipe(j);}
 }
 
 function attachSwipe(i){
-  var el=_d.getElementById('ri'+i);
+  var el=D.getElementById('ri'+i);
   if(!el)return;
   var x0,y0,dx=0,moved=false,dirH=false;
   swipeOpen[i]=swipeOpen[i]||false;
@@ -285,16 +317,17 @@ function attachSwipe(i){
 }
 
 function closeSwipe(i){
-  var el=_d.getElementById('ri'+i);
+  var el=D.getElementById('ri'+i);
   if(el){el.style.transition='transform .22s ease';el.style.transform='translateX(0)';}
   swipeOpen[i]=false;
 }
 
+// ── CRUD RAPPORTS ────────────────────────────────────────────
 function startNew(){
   editIdx=null;curSits=[];
-  _d.getElementById('fSecteur').value='';
-  _d.getElementById('fDate').value=new Date().toISOString().split('T')[0];
-  _d.getElementById('fParts').value='';
+  D.getElementById('fSecteur').value='';
+  D.getElementById('fDate').value=new Date().toISOString().split('T')[0];
+  D.getElementById('fParts').value='';
   renderSits();show('Report');
 }
 
@@ -302,32 +335,44 @@ function openReport(idx){
   viewIdx=idx;
   var r=reports[idx];
   var pts=(r.participants||'').split('\n').filter(Boolean).map(function(p){return '<li>'+p+'</li>';}).join('');
-  var h='<div class="card"><div class="card-title">'+(r.secteur||'—')+'</div><div style="color:var(--muted);font-size:14px;margin-bottom:8px">📅 '+(r.date||'—')+'</div>'+(pts?'<b style="font-size:13px">Participants</b><ul style="padding-left:18px;font-size:14px;margin-top:4px">'+pts+'</ul>':'')+'</div>';
+  var h='<div class="card"><div class="card-title">'+(r.secteur||'—')+'</div>'
+    +'<div style="color:var(--muted);font-size:14px;margin-bottom:8px">📅 '+(r.date||'—')+'</div>'
+    +(pts?'<b style="font-size:13px">Participants</b><ul style="padding-left:18px;font-size:14px;margin-top:4px">'+pts+'</ul>':'')
+    +'</div>';
   (r.situations||[]).forEach(function(s){
     var isP=s.type==='particuliere';
     var rp=s.risk?'<span class="rpill r'+s.risk[0]+'">'+RL[s.risk]+'</span>':'';
     var ps=(s.preconisations||'').split('\n').filter(Boolean).map(function(p){return '<li>'+p+'</li>';}).join('');
-    h+='<div class="card"><div class="card-title">'+(isP?'⚠️ Particulière':'🔧 Travail')+' : '+(s.titre||'')+'</div>'+(s.photo?'<img src="'+s.photo+'" style="width:100%;border-radius:10px;margin-bottom:10px">':'')+rp+(!isP&&s.tache?'<div style="margin-top:8px"><b>Tâche :</b> '+s.tache+'</div>':'')+(s.description?'<div style="margin-top:6px"><b>'+(isP?'Description':'Situation')+' :</b> '+s.description+'</div>':'')+(!isP&&s.risques?'<div style="margin-top:6px"><b>Risques :</b> '+s.risques+'</div>':'')+(!isP&&s.frequence?'<div style="margin-top:6px"><b>Fréquence :</b> '+s.frequence+'</div>':'')+(isP&&s.consequences?'<div style="margin-top:6px"><b>Conséquences :</b> '+s.consequences+'</div>':'')+(ps?'<div style="margin-top:8px"><b>Préconisations :</b><ul style="padding-left:18px;margin-top:4px">'+ps+'</ul></div>':'')+'</div>';
+    h+='<div class="card"><div class="card-title">'+(isP?'⚠️ Particulière':'🔧 Travail')+' : '+(s.titre||'')+'</div>'
+      +(s.photo?'<img src="'+s.photo+'" style="width:100%;border-radius:10px;margin-bottom:10px">':'')
+      +rp
+      +(!isP&&s.tache?'<div style="margin-top:8px"><b>Tâche :</b> '+s.tache+'</div>':'')
+      +(s.description?'<div style="margin-top:6px"><b>'+(isP?'Description':'Situation')+' :</b> '+s.description+'</div>':'')
+      +(!isP&&s.risques?'<div style="margin-top:6px"><b>Risques :</b> '+s.risques+'</div>':'')
+      +(!isP&&s.frequence?'<div style="margin-top:6px"><b>Fréquence :</b> '+s.frequence+'</div>':'')
+      +(isP&&s.consequences?'<div style="margin-top:6px"><b>Conséquences :</b> '+s.consequences+'</div>':'')
+      +(ps?'<div style="margin-top:8px"><b>Préconisations :</b><ul style="padding-left:18px;margin-top:4px">'+ps+'</ul></div>':'')
+      +'</div>';
   });
-  _d.getElementById('vContent').innerHTML=h;
+  D.getElementById('vContent').innerHTML=h;
   show('View');
 }
 
 function startEdit(){
   var r=reports[viewIdx];
   editIdx=viewIdx;
-  _d.getElementById('fSecteur').value=r.secteur||'';
-  _d.getElementById('fDate').value=r.date||'';
-  _d.getElementById('fParts').value=r.participants||'';
+  D.getElementById('fSecteur').value=r.secteur||'';
+  D.getElementById('fDate').value=r.date||'';
+  D.getElementById('fParts').value=r.participants||'';
   curSits=JSON.parse(JSON.stringify(r.situations||[]));
   renderSits();show('Report');
 }
 
 function doSave(){
   var r={
-    secteur:_d.getElementById('fSecteur').value.trim()||'Sans titre',
-    date:_d.getElementById('fDate').value,
-    participants:_d.getElementById('fParts').value,
+    secteur:D.getElementById('fSecteur').value.trim()||'Sans titre',
+    date:D.getElementById('fDate').value,
+    participants:D.getElementById('fParts').value,
     situations:JSON.parse(JSON.stringify(curSits)),
     savedAt:Date.now()
   };
@@ -341,15 +386,22 @@ function doSave(){
   openReport(idx);
 }
 
-function askDel(idx){delIdx=idx;_d.getElementById('confOv').classList.add('open');}
+function askDel(idx){delIdx=idx;D.getElementById('confOv').classList.add('open');}
 
+// ── SITUATIONS ───────────────────────────────────────────────
 function renderSits(){
-  var el=_d.getElementById('sList');
+  var el=D.getElementById('sList');
   if(!curSits.length){el.innerHTML='';return;}
   var h='';
   for(var i=0;i<curSits.length;i++){
     var s=curSits[i];
-    h+='<div class="sit-card"><div class="sit-head"><div class="sit-title">'+(s.titre||'Sans titre')+'</div><span class="tbadge '+(s.type==='particuliere'?'tp':'tt')+'">'+(s.type==='particuliere'?'Particulière':'Travail')+'</span></div>'+(s.risk?'<span class="rpill r'+s.risk[0]+'">'+RL[s.risk]+'</span>':'')+'<div style="margin-top:8px"><button class="btn btn-danger btn-sm" data-i="'+i+'" type="button">Supprimer</button></div></div>';
+    h+='<div class="sit-card"><div class="sit-head">'
+      +'<div class="sit-title">'+(s.titre||'Sans titre')+'</div>'
+      +'<span class="tbadge '+(s.type==='particuliere'?'tp':'tt')+'">'+(s.type==='particuliere'?'Particulière':'Travail')+'</span>'
+      +'</div>'
+      +(s.risk?'<span class="rpill r'+s.risk[0]+'">'+RL[s.risk]+'</span>':'')
+      +'<div style="margin-top:8px"><button class="btn btn-danger btn-sm" data-i="'+i+'" type="button">Supprimer</button></div>'
+      +'</div>';
   }
   el.innerHTML=h;
   el.querySelectorAll('[data-i]').forEach(function(b){
@@ -359,181 +411,127 @@ function renderSits(){
 
 function openSitModal(){
   curPhoto=null;curRisk=null;
-  ['mTitre','mTache','mDesc','mRisques','mFreq','mDescP','mConseq','mPreco'].forEach(function(id){_d.getElementById(id).value='';});
-  _d.getElementById('mType').value='travail';
+  ['mTitre','mTache','mDesc','mRisques','mFreq','mDescP','mConseq','mPreco'].forEach(function(id){D.getElementById(id).value='';});
+  D.getElementById('mType').value='travail';
   resetPhotoZone();
-  _d.querySelectorAll('.risk-btn').forEach(function(b){b.classList.remove('active');});
+  D.querySelectorAll('.risk-btn').forEach(function(b){b.classList.remove('active');});
   toggleSitType();
-  _d.getElementById('sitModal').classList.add('open');
+  D.getElementById('sitModal').classList.add('open');
 }
 
 function resetPhotoZone(){
-  var z=_d.getElementById('pZone');
+  var z=D.getElementById('pZone');
   z.innerHTML='<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Appuyer pour prendre une photo</span><input id="pInput" type="file" accept="image/*" capture="environment">';
-  _d.getElementById('pInput').addEventListener('change',handlePhoto);
+  D.getElementById('pInput').addEventListener('change',handlePhoto);
 }
 
 function toggleSitType(){
-  var t=_d.getElementById('mType').value;
-  _d.getElementById('fTravail').style.display=t==='travail'?'':'none';
-  _d.getElementById('fPart').style.display=t==='particuliere'?'':'none';
+  var t=D.getElementById('mType').value;
+  D.getElementById('fTravail').style.display=t==='travail'?'':'none';
+  D.getElementById('fPart').style.display=t==='particuliere'?'':'none';
 }
 
 function doAddSit(){
-  var type=_d.getElementById('mType').value;
-  var s={type:type,titre:_d.getElementById('mTitre').value,photo:curPhoto,preconisations:_d.getElementById('mPreco').value,risk:curRisk};
-  if(type==='travail'){s.tache=_d.getElementById('mTache').value;s.description=_d.getElementById('mDesc').value;s.risques=_d.getElementById('mRisques').value;s.frequence=_d.getElementById('mFreq').value;}
-  else{s.description=_d.getElementById('mDescP').value;s.consequences=_d.getElementById('mConseq').value;}
+  var type=D.getElementById('mType').value;
+  var s={type:type,titre:D.getElementById('mTitre').value,photo:curPhoto,preconisations:D.getElementById('mPreco').value,risk:curRisk};
+  if(type==='travail'){s.tache=D.getElementById('mTache').value;s.description=D.getElementById('mDesc').value;s.risques=D.getElementById('mRisques').value;s.frequence=D.getElementById('mFreq').value;}
+  else{s.description=D.getElementById('mDescP').value;s.consequences=D.getElementById('mConseq').value;}
   curSits.push(s);renderSits();
-  _d.getElementById('sitModal').classList.remove('open');
+  D.getElementById('sitModal').classList.remove('open');
   showToast('Situation ajoutée ✓');
 }
 
+// ── PHOTO ────────────────────────────────────────────────────
 function handlePhoto(e){
   var file=e.target.files[0];if(!file)return;
   var img=new Image(),url=URL.createObjectURL(file);
   img.onload=function(){
     var MAX=1000,Q=0.65,w=img.width,h=img.height;
     if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
-    var c=_d.createElement('canvas');c.width=w;c.height=h;
+    var c=D.createElement('canvas');c.width=w;c.height=h;
     c.getContext('2d').drawImage(img,0,0,w,h);
     curPhoto=c.toDataURL('image/jpeg',Q);
     URL.revokeObjectURL(url);
-    var z=_d.getElementById('pZone');
+    var z=D.getElementById('pZone');
     z.innerHTML='<img src="'+curPhoto+'"><input id="pInput" type="file" accept="image/*" capture="environment">';
-    _d.getElementById('pInput').addEventListener('change',handlePhoto);
+    D.getElementById('pInput').addEventListener('change',handlePhoto);
   };
   img.src=url;
 }
 
+// ── RISQUE ───────────────────────────────────────────────────
 function setupRiskBar(barId){
-  _d.getElementById(barId).querySelectorAll('.risk-btn').forEach(function(btn){
+  D.getElementById(barId).querySelectorAll('.risk-btn').forEach(function(btn){
     btn.addEventListener('click',function(){
-      _d.getElementById(barId).querySelectorAll('.risk-btn').forEach(function(b){b.classList.remove('active');});
+      D.getElementById(barId).querySelectorAll('.risk-btn').forEach(function(b){b.classList.remove('active');});
       btn.classList.add('active');curRisk=btn.dataset.r;
     });
   });
 }
 
+// ── APERÇU / IMPRESSION ──────────────────────────────────────
 function doPrint(){
   if(viewIdx===null){showToast("Ouvrez un rapport d'abord");return;}
   var r=reports[viewIdx];
   var pts=(r.participants||'').split('\n').filter(Boolean).map(function(p){return '<li>'+p+'</li>';}).join('');
-  var sp='';
+  var h='<div style="background:#1a2e5a;color:#fff;padding:16px;border-radius:14px;margin-bottom:16px">'
+    +'<div style="font-size:22px;font-weight:700;margin-bottom:4px">'+(r.secteur||'—')+'</div>'
+    +'<div style="font-size:14px;opacity:.8">📅 '+(r.date||'—')+'</div>'
+    +(pts?'<div style="margin-top:10px;font-size:13px;opacity:.9"><b>Participants :</b><ul style="padding-left:18px;margin-top:4px">'+pts+'</ul></div>':'')
+    +'</div>';
   (r.situations||[]).forEach(function(s){
     var isP=s.type==='particuliere';
+    var rp=s.risk?'<span style="display:inline-block;padding:2px 12px;border-radius:20px;font-size:12px;font-weight:700;background:'+RB[s.risk]+';color:'+RC[s.risk]+';margin-bottom:8px">'+RL[s.risk]+'</span>':'';
     var ps=(s.preconisations||'').split('\n').filter(Boolean).map(function(p){return '<li>'+p+'</li>';}).join('');
-    var rh=s.risk?'<span style="display:inline-block;padding:3px 14px;border-radius:20px;font-size:14px;font-weight:700;background:'+RB[s.risk]+';color:'+RC[s.risk]+';margin-bottom:10px">'+RL[s.risk]+'</span>':'';
-    var bh=isP?
-      (s.description?'<p><b>Description :</b> '+s.description+'</p>':'')+(s.consequences?'<p><b>Conséquences :</b> '+s.consequences+'</p>':''):
-      (s.tache?'<p><b>Tâche :</b> '+s.tache+'</p>':'')+(s.description?'<p><b>Situation :</b> '+s.description+'</p>':'')+(s.risques?'<p><b>Risques :</b> '+s.risques+'</p>':'')+(s.frequence?'<p><b>Fréquence :</b> '+s.frequence+'</p>':'');
-    sp+='<div class="sp"><div class="ss"></div><div class="sl">'+(s.photo?'<img src="'+s.photo+'">':'<div style="flex:1"></div>')+'</div><div class="srw"><div class="sr"><h2>'+(isP?'Situation particulière':'Situation de travail')+' : '+(s.titre||'')+'</h2>'+rh+bh+(ps?'<p><b>Préconisations :</b></p><ul>'+ps+'</ul>':'')+'</div><div class="sf"></div></div></div>';
+    h+='<div style="background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.07)">'
+      +'<div style="font-size:15px;font-weight:700;color:#1a2e5a;margin-bottom:8px">'+(isP?'⚠️ Particulière':'🔧 Travail')+' : '+(s.titre||'')+'</div>'
+      +(s.photo?'<img src="'+s.photo+'" style="width:100%;border-radius:10px;margin-bottom:10px">':'')
+      +rp
+      +(!isP&&s.tache?'<div style="margin-bottom:6px"><b>Tâche :</b> '+s.tache+'</div>':'')
+      +(s.description?'<div style="margin-bottom:6px"><b>'+(isP?'Description':'Situation')+' :</b> '+s.description+'</div>':'')
+      +(!isP&&s.risques?'<div style="margin-bottom:6px"><b>Risques :</b> '+s.risques+'</div>':'')
+      +(!isP&&s.frequence?'<div style="margin-bottom:6px"><b>Fréquence :</b> '+s.frequence+'</div>':'')
+      +(isP&&s.consequences?'<div style="margin-bottom:6px"><b>Conséquences :</b> '+s.consequences+'</div>':'')
+      +(ps?'<div><b>Préconisations :</b><ul style="padding-left:18px;margin-top:4px">'+ps+'</ul></div>':'')
+      +'</div>';
   });
-
-  var css='*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;}'
-    +'.tb{position:fixed;top:0;left:0;right:0;background:#1a2e5a;color:#fff;display:flex;align-items:center;gap:10px;padding:10px 16px;z-index:100;}'
-    +'.tb button{padding:7px 16px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;}'
-    +'.btn-bk{background:rgba(255,255,255,.2);color:#fff;}'
-    +'.btn-sh{background:#2e8b2e;color:#fff;}'
-    +'.btn-pr{background:#fff;color:#1a2e5a;}'
-    +'.tb-title{flex:1;font-size:15px;font-weight:700;}'
-    +'.wrap{margin-top:52px;}'
-    +'@media print{.tb{display:none!important;}.wrap{margin-top:0;}@page{size:A4 landscape;margin:0;}}'
-    +'.cv{width:297mm;min-height:210mm;display:flex;page-break-after:always;}'
-    +'.csb{width:14px;background:#1a2e5a;flex-shrink:0;}'
-    +'.cb{flex:1;display:flex;flex-direction:column;}'
-    +'.cm{flex:1;display:flex;align-items:center;padding:40px;}'
-    +'.ct{padding-left:28px;border-left:8px solid #1a2e5a;}'
-    +'.ct h1{font-size:52px;font-weight:700;line-height:1.2;}'
-    +'.cd{font-size:22px;font-weight:700;margin-top:16px;color:#1a2e5a;}'
-    +'.cpa{margin-top:20px;border-top:1px solid #dde;padding-top:14px;}'
-    +'.cpa b{font-size:18px;font-weight:700;display:block;margin-bottom:8px;color:#1a2e5a;}'
-    +'.cpa ul{padding-left:22px;}.cpa li{font-size:17px;padding:3px 0;}'
-    +'.cfb{height:38px;background:#1a2e5a;}'
-    +'.sp{width:297mm;height:210mm;display:flex;page-break-after:always;overflow:hidden;}'
-    +'.ss{width:14px;background:#1a2e5a;flex-shrink:0;}'
-    +'.sl{width:44%;flex-shrink:0;background:#f0f0f0;display:flex;align-items:center;justify-content:center;}'
-    +'.sl img{width:100%;height:calc(210mm - 38px);object-fit:contain;object-position:center;display:block;}'
-    +'.srw{flex:1;display:flex;flex-direction:column;}'
-    +'.sr{flex:1;padding:20px 24px 12px;overflow:hidden;}'
-    +'.sr h2{font-size:26px;font-weight:700;border-bottom:2px solid #1a2e5a;padding-bottom:8px;margin-bottom:12px;line-height:1.3;}'
-    +'.sr p{margin-bottom:8px;font-size:18px;line-height:1.6;}'
-    +'.sr ul{padding-left:20px;margin-top:4px;}.sr li{font-size:17px;padding:3px 0;line-height:1.5;}'
-    +'.sf{height:38px;background:#1a2e5a;flex-shrink:0;}';
-
-  var titre=r.secteur||'—';
-  var dateR=r.date||'—';
-  var ptsHtml=pts?'<div class="cpa"><b>Participants à la visite :</b><ul>'+pts+'</ul></div>':'';
-
-  // Construire le HTML sans aucun tag script problématique
-  var parts=[
-    '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">',
-    '<meta name="viewport" content="width=device-width,initial-scale=1">',
-    '<title>Audit — '+titre+'</title>',
-    '<style>'+css+'</style></head><body>',
-    '<div class="tb">',
-    '<button class="btn-bk" id="bb">← Retour</button>',
-    '<span class="tb-title">'+titre+'</span>',
-    '<button class="btn-sh" id="bs">⬆ Partager</button>',
-    '<button class="btn-pr" id="bp">🖨 PDF</button>',
-    '</div>',
-    '<div class="wrap">',
-    '<div class="cv"><div class="csb"></div><div class="cb"><div class="cm"><div class="ct">',
-    '<h1>Audit sécurité :<br>'+titre+'</h1>',
-    '<div class="cd">'+dateR+'</div>',
-    ptsHtml,
-    '</div></div><div class="cfb"></div></div></div>',
-    sp,
-    '</div></body></html>'
-  ];
-
-  var w=window.open('','_blank');
-  w.document.write(parts.join(''));
-  w.document.close();
-  w.onload=function(){
-    w.document.getElementById('bb').onclick=function(){w.close();};
-    w.document.getElementById('bp').onclick=function(){w.print();};
-    w.document.getElementById('bs').onclick=function(){
-      if(w.navigator.share){
-        w.navigator.share({title:'Audit — '+titre,text:'Rapport audit sécurité'}).catch(function(){});
-      } else {
-        w.alert('Utilisez le bouton Partager de votre navigateur');
-      }
-    };
-  };
+  D.getElementById('previewContent').innerHTML=h;
+  D.getElementById('printArea').innerHTML=h;
+  show('Preview');
 }
 
+// ── TOAST ────────────────────────────────────────────────────
 function showToast(msg){
-  var t=_d.getElementById('toastEl');
+  var t=D.getElementById('toastEl');
   t.textContent=msg;t.classList.add('show');
   setTimeout(function(){t.classList.remove('show');},3000);
 }
 
-// Boutons
-_d.getElementById('bBackPreview').addEventListener('click',function(){show('View');});
-_d.getElementById('bPrintPreview').addEventListener('click',function(){window.print();});
-_d.getElementById('bNew').addEventListener('click',startNew);
-_d.getElementById('nNew').addEventListener('click',startNew);
-_d.getElementById('nHome').addEventListener('click',function(){show('Home');});
-_d.getElementById('nExport').addEventListener('click',doPrint);
-_d.getElementById('bSave').addEventListener('click',doSave);
-_d.getElementById('bEdit').addEventListener('click',startEdit);
-_d.getElementById('bPrint').addEventListener('click',doPrint);
-_d.getElementById('bDelCur').addEventListener('click',function(){askDel(viewIdx);});
-_d.getElementById('bAddSit').addEventListener('click',openSitModal);
-_d.getElementById('bCancelSit').addEventListener('click',function(){_d.getElementById('sitModal').classList.remove('open');});
-_d.getElementById('bOkSit').addEventListener('click',doAddSit);
-_d.getElementById('mType').addEventListener('change',toggleSitType);
-_d.getElementById('pInput').addEventListener('change',handlePhoto);
-_d.getElementById('bCancelDel').addEventListener('click',function(){
+// ── BRANCHEMENT BOUTONS ──────────────────────────────────────
+D.getElementById('bNew').addEventListener('click',startNew);
+D.getElementById('nNew').addEventListener('click',startNew);
+D.getElementById('nHome').addEventListener('click',function(){show('Home');});
+D.getElementById('nExport').addEventListener('click',doPrint);
+D.getElementById('bSave').addEventListener('click',doSave);
+D.getElementById('bEdit').addEventListener('click',startEdit);
+D.getElementById('bPrint').addEventListener('click',doPrint);
+D.getElementById('bDelCur').addEventListener('click',function(){askDel(viewIdx);});
+D.getElementById('bAddSit').addEventListener('click',openSitModal);
+D.getElementById('bCancelSit').addEventListener('click',function(){D.getElementById('sitModal').classList.remove('open');});
+D.getElementById('bOkSit').addEventListener('click',doAddSit);
+D.getElementById('mType').addEventListener('change',toggleSitType);
+D.getElementById('pInput').addEventListener('change',handlePhoto);
+D.getElementById('bBackPreview').addEventListener('click',function(){show('View');});
+D.getElementById('bPrintPreview').addEventListener('click',function(){window.print();});
+D.getElementById('bCancelDel').addEventListener('click',function(){
   if(delIdx!==null)closeSwipe(delIdx);
   delIdx=null;
-  _d.getElementById('confOv').classList.remove('open');
+  D.getElementById('confOv').classList.remove('open');
 });
-_d.getElementById('bOkDel').addEventListener('click',function(){
+D.getElementById('bOkDel').addEventListener('click',function(){
   if(delIdx===null)return;
   reports.splice(delIdx,1);persist();delIdx=null;
-  _d.getElementById('confOv').classList.remove('open');
+  D.getElementById('confOv').classList.remove('open');
   showToast('Rapport supprimé');
   viewIdx=null;show('Home');
 });
